@@ -1,7 +1,25 @@
 import type { WDIOBrowser } from '../driver';
 import { selectors } from '../selectors';
 import { logger } from '../utils/logger';
-import { sleep, randomRange, coordTap, parseBoundsCenter } from '../utils/adb';
+import { sleep, randomRange, coordTap, parseBoundsCenter, adb } from '../utils/adb';
+
+/**
+ * The X Android feed auto-hides the compose FAB once the user scrolls down
+ * (e.g. during warmup). Tapping where the FAB used to be becomes a no-op and
+ * our subsequent `waitForExist(tweet_text)` then times out or — worse — keeps
+ * UIAutomator2 busy long enough to crash. A short reverse swipe (top → bottom
+ * finger motion, so the feed scrolls back toward the top) brings the FAB back.
+ */
+async function revealComposeFab(): Promise<void> {
+    const sizeOut = adb(['shell', 'wm', 'size']);
+    const m = sizeOut.match(/(\d+)x(\d+)/);
+    const width = m ? parseInt(m[1], 10) : 1080;
+    const height = m ? parseInt(m[2], 10) : 2400;
+    const x = Math.floor(width * 0.5);
+    const startY = Math.floor(height * 0.3);
+    const endY = Math.floor(height * 0.75);
+    adb(['shell', 'input', 'swipe', String(x), String(startY), String(x), String(endY), '350']);
+}
 
 /**
  * Composes and publishes a tweet from whichever account is currently active.
@@ -22,6 +40,12 @@ import { sleep, randomRange, coordTap, parseBoundsCenter } from '../utils/adb';
 export async function post(driver: WDIOBrowser, text: string): Promise<void> {
     logger.info(`[post] composing (${text.length} chars)`);
 
+    // 0. Reveal the FAB in case warmup scrolled the feed down and it auto-hid.
+    //    A short top→bottom finger swipe scrolls the feed back toward the top,
+    //    which causes X to re-show the compose FAB.
+    await revealComposeFab();
+    await sleep(randomRange(600, 1000));
+
     // 1. Tap the floating compose button. On current FR app this opens the
     //    radial menu (Passer en direct / Spaces / Photos / Poster). Use a real
     //    coord-tap via adb rather than webdriverio's .click(); the latter,
@@ -31,10 +55,12 @@ export async function post(driver: WDIOBrowser, text: string): Promise<void> {
     await fab.waitForExist({ timeout: 10_000 });
     const fabBounds = await fab.getAttribute('bounds');
     const fabCenter = fabBounds ? parseBoundsCenter(fabBounds) : null;
-    if (fabCenter) {
+    // Reject degenerate bounds like [0,0][0,0] (element reported but not
+    // actually laid out — e.g. hidden FAB that somehow still matches the id).
+    if (fabCenter && fabCenter.x > 0 && fabCenter.y > 0) {
         coordTap(fabCenter.x, fabCenter.y);
     } else {
-        logger.warn('[post] fab bounds unavailable; falling back to webdriverio click');
+        logger.warn(`[post] fab bounds invalid (${fabBounds}); falling back to webdriverio click`);
         await fab.click();
     }
     await sleep(randomRange(700, 1200));
@@ -49,9 +75,10 @@ export async function post(driver: WDIOBrowser, text: string): Promise<void> {
         await fab2.waitForExist({ timeout: 5_000 });
         const fab2Bounds = await fab2.getAttribute('bounds');
         const fab2Center = fab2Bounds ? parseBoundsCenter(fab2Bounds) : null;
-        if (fab2Center) {
+        if (fab2Center && fab2Center.x > 0 && fab2Center.y > 0) {
             coordTap(fab2Center.x, fab2Center.y);
         } else {
+            logger.warn(`[post] fab2 bounds invalid (${fab2Bounds}); falling back to webdriverio click`);
             await fab2.click();
         }
         await sleep(randomRange(700, 1200));
