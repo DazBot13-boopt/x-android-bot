@@ -93,7 +93,7 @@ export async function switchAccount(driver: WDIOBrowser, username: string): Prom
     await row.waitForExist({ timeout: 10_000 });
     await row.click();
 
-    // 4. Sheet closes + app refreshes on Home under the new account.
+    // 6. Sheet closes + app refreshes on Home under the new account.
     await sleep(randomRange(1500, 2500));
     logger.info(`[switchAccount] now on @${handle}`);
 }
