@@ -43,6 +43,27 @@ export function dumpUiHierarchy(): string {
     return xml;
 }
 
+/**
+ * Sends a real touch event at (x, y) via `adb shell input tap`.
+ * Use this for elements whose own node is clickable=false but whose parent
+ * is clickable — webdriverio's .click() on the child sometimes doesn't bubble
+ * to the clickable ancestor, whereas a physical coord-tap always does.
+ */
+export function coordTap(x: number, y: number): void {
+    adb(['shell', 'input', 'tap', String(Math.round(x)), String(Math.round(y))]);
+}
+
+/**
+ * Parses a UIAutomator bounds string like "[528,152][576,200]" into a
+ * centered (x, y) coordinate pair. Returns null on malformed input.
+ */
+export function parseBoundsCenter(bounds: string): { x: number; y: number } | null {
+    const m = bounds.match(/^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/);
+    if (!m) return null;
+    const [, x1, y1, x2, y2] = m.map(Number);
+    return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+}
+
 export function sleep(ms: number): Promise<void> {
     return new Promise((r) => setTimeout(r, ms));
 }

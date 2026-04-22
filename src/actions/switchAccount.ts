@@ -1,7 +1,7 @@
 import type { WDIOBrowser } from '../driver';
 import { selectors } from '../selectors';
 import { logger } from '../utils/logger';
-import { sleep, randomRange, ensureAppForeground } from '../utils/adb';
+import { sleep, randomRange, ensureAppForeground, coordTap, parseBoundsCenter } from '../utils/adb';
 import { config } from '../config';
 
 /**
@@ -76,12 +76,27 @@ export async function switchAccount(driver: WDIOBrowser, username: string): Prom
     await drawer.waitForExist({ timeout: 10_000 });
 
     // 3. Tap "Permuter les comptes" to open the Comptes bottom sheet.
+    //
+    //    The target node is a ~48x48 px android.view.View with clickable=false
+    //    (its clickable ancestor is a ~96x96 px parent View). WebDriverIO's
+    //    .click() on this child is flaky — the event sometimes doesn't bubble
+    //    to the clickable ancestor on real devices. We therefore read the node's
+    //    bounds via getAttribute and drive a real `adb input tap` on the center,
+    //    which always registers.
     let switchBtn = await driver.$(selectors.sideDrawer.switchAccountsFr);
     if (!(await switchBtn.isExisting())) {
         switchBtn = await driver.$(selectors.sideDrawer.switchAccountsEn);
     }
     await switchBtn.waitForExist({ timeout: 10_000 });
-    await switchBtn.click();
+    const rawBounds = await switchBtn.getAttribute('bounds');
+    const center = rawBounds ? parseBoundsCenter(rawBounds) : null;
+    if (center) {
+        coordTap(center.x, center.y);
+    } else {
+        // Fallback: if we couldn't read bounds, try the webdriverio click anyway.
+        logger.warn('[switchAccount] bounds unavailable; falling back to webdriverio click');
+        await switchBtn.click();
+    }
     await sleep(randomRange(600, 1200));
 
     // 4. Wait for the bottom sheet to render.
