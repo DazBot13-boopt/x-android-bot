@@ -5,6 +5,16 @@ import { sleep, randomRange, adb } from '../utils/adb';
 import { config } from '../config';
 
 /**
+ * POSIX single-quote a string for safe interpolation into a `sh -c` command.
+ * Strategy: wrap the whole thing in single quotes, and escape any literal
+ * single quote inside by closing the quote, writing a backslash-escaped
+ * quote, and reopening: `a'b` -> `'a'\''b'`.
+ */
+function shellSingleQuote(s: string): string {
+    return "'" + s.replace(/'/g, `'\\''`) + "'";
+}
+
+/**
  * Composes and publishes a tweet from whichever account is currently active.
  * Caller is responsible for calling switchAccount() first.
  *
@@ -35,21 +45,22 @@ export async function post(driver: WDIOBrowser, text: string): Promise<void> {
     logger.info(`[post] composing (${text.length} chars)`);
 
     // 1. Fire the SEND intent scoped to the X package. Pre-fills `tweet_text`.
+    //
+    //    `adb shell` joins all extra argv with spaces into a single command
+    //    string and hands it to `sh` on the device, which re-splits on spaces.
+    //    So `--es EXTRA_TEXT "hello world"` as separate JS argv elements would
+    //    be reinterpreted as two args on the device side and `world` would
+    //    leak into the `-p` slot. We therefore build the full command string
+    //    ourselves with proper POSIX quoting and pass it as a single argv.
     try {
-        adb([
-            'shell',
-            'am',
-            'start',
-            '-a',
-            'android.intent.action.SEND',
-            '-t',
-            'text/plain',
-            '--es',
-            'android.intent.extra.TEXT',
-            text,
-            '-p',
-            config.android.xAppPackage,
-        ]);
+        const cmd = [
+            'am start',
+            '-a android.intent.action.SEND',
+            '-t text/plain',
+            `--es android.intent.extra.TEXT ${shellSingleQuote(text)}`,
+            `-p ${config.android.xAppPackage}`,
+        ].join(' ');
+        adb(['shell', cmd]);
     } catch (err) {
         logger.warn(`[post] SEND intent failed: ${(err as Error).message}`);
     }
@@ -68,17 +79,13 @@ export async function post(driver: WDIOBrowser, text: string): Promise<void> {
         //    twitter://post deep link skips that.
         logger.warn('[post] SEND did not open composer — trying twitter://post deeplink');
         try {
-            adb([
-                'shell',
-                'am',
-                'start',
-                '-a',
-                'android.intent.action.VIEW',
-                '-d',
-                'twitter://post',
-                '-p',
-                config.android.xAppPackage,
-            ]);
+            const cmd = [
+                'am start',
+                '-a android.intent.action.VIEW',
+                '-d twitter://post',
+                `-p ${config.android.xAppPackage}`,
+            ].join(' ');
+            adb(['shell', cmd]);
         } catch (err) {
             logger.warn(`[post] VIEW intent failed: ${(err as Error).message}`);
         }
