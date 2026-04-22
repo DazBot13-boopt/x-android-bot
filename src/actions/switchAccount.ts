@@ -101,7 +101,18 @@ export async function switchAccount(driver: WDIOBrowser, username: string): Prom
     const handle = username.replace(/^@/, '');
     logger.info(`[switchAccount] → @${handle}`);
 
-    // Fast path A: in-memory cache says we're already on this account.
+    // Fast path A: env-var override. When X_ACTIVE_ACCOUNT is set, the user
+    //   is telling us "this is the account currently logged in on the device,
+    //   never bother with the drawer/sheet for it." This is the single most
+    //   reliable path on a single-account device since neither the Home screen
+    //   nor most internal screens visibly show the active @handle.
+    if (config.activeAccount && config.activeAccount === handle) {
+        logger.info(`[switchAccount] already on @${handle} (X_ACTIVE_ACCOUNT) — skipping`);
+        cachedCurrentUsername = handle;
+        return;
+    }
+
+    // Fast path B: in-memory cache says we're already on this account.
     if (cachedCurrentUsername === handle) {
         logger.info(`[switchAccount] already on @${handle} (cached) — skipping`);
         return;
@@ -110,8 +121,10 @@ export async function switchAccount(driver: WDIOBrowser, username: string): Prom
     // 0. Ensure the X app is on the Home tab; otherwise the nav-drawer button doesn't exist.
     await ensureOnHomeTab(driver);
 
-    // Fast path B: UI dump says the active account is already @handle.
-    //   Cheaper than the full drawer+sheet flow, and much more reliable.
+    // Fast path C: UI dump says the active account is already @handle.
+    //   Only useful on screens that actually show the @handle (e.g. the
+    //   drawer header or the profile tab). On the plain Home timeline it
+    //   usually won't match — set X_ACTIVE_ACCOUNT instead.
     if (isAlreadyOnAccount(handle)) {
         logger.info(`[switchAccount] already on @${handle} (dump probe) — skipping`);
         cachedCurrentUsername = handle;

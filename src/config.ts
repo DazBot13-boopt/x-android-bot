@@ -16,6 +16,16 @@ export const config = {
         xAppPackage: process.env.X_APP_PACKAGE || 'com.twitter.android',
         xAppActivity: process.env.X_APP_ACTIVITY || 'com.twitter.android.StartActivity',
     },
+    /**
+     * Optional: @handle (without the leading @) of the account currently
+     * logged in as the active profile on the attached device. When set and
+     * equal to the `--username` requested for a job, switchAccount() skips
+     * all UI interaction and returns immediately. Ideal for single-account
+     * devices where the drawer + account-switcher flow is pure overhead.
+     */
+    activeAccount: process.env.X_ACTIVE_ACCOUNT
+        ? process.env.X_ACTIVE_ACCOUNT.replace(/^@/, '').trim()
+        : undefined,
     workerConcurrency: parseInt(process.env.WORKER_CONCURRENCY || '1', 10),
     logLevel: (process.env.LOG_LEVEL || 'info') as 'debug' | 'info' | 'warn' | 'error',
 };
