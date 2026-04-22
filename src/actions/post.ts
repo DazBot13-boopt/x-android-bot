@@ -1,56 +1,73 @@
 import type { WDIOBrowser } from '../driver';
-import { selectors } from '../selectors';
 import { logger } from '../utils/logger';
-import { sleep, randomRange, adb } from '../utils/adb';
+import {
+    sleep,
+    randomRange,
+    adb,
+    dumpUiHierarchy,
+    coordTap,
+    parseBoundsCenter,
+} from '../utils/adb';
 import { config } from '../config';
 
 /**
  * POSIX single-quote a string for safe interpolation into a `sh -c` command.
- * Strategy: wrap the whole thing in single quotes, and escape any literal
- * single quote inside by closing the quote, writing a backslash-escaped
- * quote, and reopening: `a'b` -> `'a'\''b'`.
+ * `a'b` -> `'a'\''b'`.
  */
 function shellSingleQuote(s: string): string {
     return "'" + s.replace(/'/g, `'\\''`) + "'";
 }
 
 /**
+ * Looks for an element with `resource-id="com.twitter.android:id/<resId>"`
+ * in a UIAutomator XML dump and returns its `bounds` attribute, or null if
+ * not found.
+ */
+function findBoundsByResourceId(xml: string, resId: string): string | null {
+    // Simple but robust regex: find a node element whose resource-id attribute
+    // matches exactly, then capture its bounds attribute. We don't need a full
+    // XML parser because uiautomator dumps use a stable, flat-attribute format.
+    const re = new RegExp(
+        `<node[^>]*resource-id="${resId.replace(/[.$^*+?()\\[\\]|]/g, '\\$&')}"[^>]*bounds="(\\[[^"]+\\])"`,
+    );
+    const m = xml.match(re);
+    return m ? m[1] : null;
+}
+
+/**
  * Composes and publishes a tweet from whichever account is currently active.
  * Caller is responsible for calling switchAccount() first.
  *
- * We bypass the floating compose button (+) and its radial menu entirely by
- * sending an Android SEND intent directly to the X app. This is the same
- * intent the system uses when you tap "Share → X" from any other app, and
- * the X app handles it by opening its composer with the text pre-filled.
+ * Design: we avoid every known Appium/UIA2 failure mode in this path.
  *
- * The relevant intent filter in AndroidManifest.xml:
- *     <activity name="com.twitter.browser.BrowserActivity">
- *       <intent-filter>
- *         <action name="android.intent.action.SEND" />
- *         <data mimeType="text/plain" />
- *       </intent-filter>
- *     </activity>
+ *  1. The compose FAB (+) is auto-hidden by the X app after a downward scroll,
+ *     so warmup reliably breaks it.
+ *  2. Revealing it via a reverse swipe works visually but UIA2 reports stale
+ *     bounds, and coord-tapping empty space crashed the instrumentation.
+ *  3. A plain `SEND` intent is routed to the in-app browser activity, which
+ *     silently no-ops when the caller is already inside the X package.
  *
- * Advantages over the FAB flow:
- *   - no "FAB hidden after scroll" problem (warmup kills the FAB)
- *   - no radial menu to traverse (two-tap trap)
- *   - no UIAutomator2 pressure during the risky window
- *   - works identically in FR / EN / any locale (pure intent, no text match)
+ * So we launch `com.twitter.composer.ComposerActivity` by component name
+ * (allowed from `adb shell` even though it's `exported=false`) and pass the
+ * tweet text as a `SEND` + `EXTRA_TEXT` extra so the composer pre-fills
+ * itself. We then tap the "POSTER" button using one-shot `uiautomator dump`
+ * + `adb input tap` — never going through the live Appium/UIA2 session for
+ * the post step itself, because the activity transition consistently crashes
+ * the UIA2 instrumentation mid-find.
  *
- * Fallback: if the composer doesn't render within ~10 s we try the deep-link
- * `twitter://post` as a second attempt; if that also fails we surface a
- * clear error rather than thrashing on the FAB.
+ * The Appium session remains open for the caller's benefit (e.g. chaining
+ * another action), but this function does not make any UIA2 calls after the
+ * intent fires.
  */
 export async function post(driver: WDIOBrowser, text: string): Promise<void> {
+    // We accept the driver argument to keep the signature stable for the
+    // caller/worker but we deliberately do not use it here. Underscore-prefix
+    // suppresses "unused" lint warnings.
+    void driver;
+
     logger.info(`[post] composing (${text.length} chars)`);
 
-    // 1. Launch the composer directly by component name with SEND extras.
-    //    `com.twitter.composer.ComposerActivity` is exported=false, but
-    //    `adb shell am start` runs under the shell UID which has permission to
-    //    launch non-exported activities of a package (unlike a plain SEND
-    //    intent from outside, which has to be routed through BrowserActivity).
-    //    Supplying `-a SEND -t text/plain --es EXTRA_TEXT …` pre-fills the
-    //    composer's EditText, so we skip typing entirely.
+    // 1. Launch the composer directly with pre-filled text.
     try {
         const cmd = [
             'am start',
@@ -61,52 +78,47 @@ export async function post(driver: WDIOBrowser, text: string): Promise<void> {
         ].join(' ');
         adb(['shell', cmd]);
     } catch (err) {
-        logger.warn(`[post] ComposerActivity start failed: ${(err as Error).message}`);
+        throw new Error(
+            `[post] failed to launch ComposerActivity: ${(err as Error).message}`,
+        );
     }
-    await sleep(randomRange(1500, 2500));
 
-    // 2. Wait for the composer's EditText to appear.
-    let input = await driver.$(selectors.composer.textInput);
-    const composerOpened = await input
-        .waitForExist({ timeout: 10_000 })
-        .then(() => true)
-        .catch(() => false);
+    // 2. Give the composer a beat to inflate. This is the window during which
+    //    UIA2 previously crashed if we tried findElement.
+    await sleep(randomRange(3500, 4500));
 
-    if (!composerOpened) {
-        // 3. Fallback: deep-link to the compose screen. Some X versions route
-        //    SEND through an intermediate "send as post / DM" chooser; the
-        //    twitter://post deep link skips that.
-        logger.warn('[post] SEND did not open composer — trying twitter://post deeplink');
-        try {
-            const cmd = [
-                'am start',
-                '-a android.intent.action.VIEW',
-                '-d twitter://post',
-                `-p ${config.android.xAppPackage}`,
-            ].join(' ');
-            adb(['shell', cmd]);
-        } catch (err) {
-            logger.warn(`[post] VIEW intent failed: ${(err as Error).message}`);
+    // 3. Find the POSTER button via a one-shot uiautomator dump (not Appium).
+    //    Retry up to 3 times: the composer may need a couple of seconds to
+    //    finish enabling the button after the text is committed.
+    const BTN_RES_ID = `${config.android.xAppPackage}:id/button_tweet`;
+    let bounds: string | null = null;
+    for (let attempt = 0; attempt < 3 && !bounds; attempt++) {
+        const xml = dumpUiHierarchy();
+        bounds = findBoundsByResourceId(xml, BTN_RES_ID);
+        if (!bounds) {
+            logger.info(
+                `[post] POSTER button not visible yet (attempt ${attempt + 1}/3), waiting…`,
+            );
+            await sleep(randomRange(1200, 1800));
         }
-        await sleep(randomRange(1200, 2000));
-        input = await driver.$(selectors.composer.textInput);
-        await input.waitForExist({ timeout: 10_000 });
-        // Deep link opens an empty composer — we need to type the text ourselves.
-        await input.click();
-        await sleep(randomRange(300, 600));
-        await input.setValue(text);
-        await sleep(randomRange(800, 1600));
-    } else {
-        // SEND path already pre-filled the text; just confirm focus so some X
-        // versions that re-render on focus don't drop the content.
-        // (We intentionally do NOT re-type — that would duplicate the text.)
+    }
+    if (!bounds) {
+        throw new Error(
+            `[post] POSTER button (${BTN_RES_ID}) not found in composer — is the composer actually open?`,
+        );
     }
 
-    // 4. Tap the "POSTER" / "Post" button.
-    const postBtn = await driver.$(selectors.composer.postButton);
-    await postBtn.waitForExist({ timeout: 10_000 });
-    await postBtn.click();
-    await sleep(randomRange(2500, 4500));
+    const center = parseBoundsCenter(bounds);
+    if (!center) {
+        throw new Error(`[post] could not parse POSTER bounds: ${bounds}`);
+    }
+
+    // 4. Fire a physical tap via `adb input tap`. Does not touch UIA2.
+    logger.info(`[post] tapping POSTER at (${center.x}, ${center.y})`);
+    coordTap(center.x, center.y);
+
+    // 5. Let the tweet upload and the composer close.
+    await sleep(randomRange(3500, 5000));
 
     logger.info(`[post] published`);
 }
