@@ -101,6 +101,15 @@ export function startWorker() {
         {
             connection,
             concurrency: config.workerConcurrency,
+            // Each job does multiple `uiautomator dump`s (20–60 s each) + adb
+            // interactions on a physical phone, so the default 30 s BullMQ
+            // lock duration expires mid-job and we hit `Missing lock for job
+            // X. moveToFinished` errors. Bump both the lock and its renewal
+            // window well above the worst-case single-step time.
+            lockDuration: 10 * 60_000, // 10 minutes
+            lockRenewTime: 2 * 60_000, // renew every 2 minutes
+            stalledInterval: 60_000, // only check for stalled jobs once per minute
+            maxStalledCount: 2,
         }
     );
 
