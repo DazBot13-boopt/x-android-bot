@@ -36,8 +36,10 @@ export function ensureAppForeground(packageName: string) {
 }
 
 export function dumpUiHierarchy(): string {
-    adb(['shell', 'uiautomator', 'dump', '/sdcard/window_dump.xml']);
-    const xml = adb(['shell', 'cat', '/sdcard/window_dump.xml']);
+    // uiautomator dump can take 20–30 s on complex screens (composer, long threads);
+    // give it some slack so short-default timeouts don't kill legitimate dumps.
+    adb(['shell', 'uiautomator', 'dump', '/sdcard/window_dump.xml'], 60_000);
+    const xml = adb(['shell', 'cat', '/sdcard/window_dump.xml'], 30_000);
     return xml;
 }
 
