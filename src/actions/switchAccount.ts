@@ -1,8 +1,51 @@
 import type { WDIOBrowser } from '../driver';
 import { selectors } from '../selectors';
 import { logger } from '../utils/logger';
-import { sleep, randomRange, ensureAppForeground, coordTap, parseBoundsCenter } from '../utils/adb';
+import {
+    sleep,
+    randomRange,
+    ensureAppForeground,
+    coordTap,
+    parseBoundsCenter,
+    dumpUiHierarchy,
+} from '../utils/adb';
 import { config } from '../config';
+
+/**
+ * In-memory cache of the username the bot is currently logged in as on the
+ * attached device. First call always runs the full switch flow and populates
+ * this. Subsequent calls with the same username skip the switch entirely.
+ *
+ * Rationale: every extra tap of the drawer → sheet → handle is a potential
+ * UIA2 flake. When the worker runs many jobs in a row on the same account
+ * (or the caller keeps enqueuing against an account that's already active),
+ * we shouldn't pay that cost.
+ *
+ * This cache is reset if the worker restarts, so at most one redundant switch
+ * happens per lifetime.
+ */
+let cachedCurrentUsername: string | null = null;
+
+/**
+ * Cheap "are we already on @handle?" probe: dumps the Home screen and looks
+ * for `text="@handle"` anywhere in the hierarchy. The top-left avatar's
+ * content-desc on the active account row contains the @handle, and so does
+ * the drawer header when it's open. Returns `true` on match, `false`
+ * otherwise (including on dump failure — we fall back to the full flow).
+ */
+function isAlreadyOnAccount(handle: string): boolean {
+    try {
+        const xml = dumpUiHierarchy();
+        const needle = `@${handle.replace(/^@/, '')}`;
+        return (
+            xml.includes(`text="${needle}"`) ||
+            xml.includes(`content-desc="${needle}`)
+        );
+    } catch (err) {
+        logger.warn(`[switchAccount] dump probe failed: ${(err as Error).message}`);
+        return false;
+    }
+}
 
 /**
  * Best-effort: make sure the X app is on the Home (timeline) tab before any
@@ -58,8 +101,22 @@ export async function switchAccount(driver: WDIOBrowser, username: string): Prom
     const handle = username.replace(/^@/, '');
     logger.info(`[switchAccount] → @${handle}`);
 
+    // Fast path A: in-memory cache says we're already on this account.
+    if (cachedCurrentUsername === handle) {
+        logger.info(`[switchAccount] already on @${handle} (cached) — skipping`);
+        return;
+    }
+
     // 0. Ensure the X app is on the Home tab; otherwise the nav-drawer button doesn't exist.
     await ensureOnHomeTab(driver);
+
+    // Fast path B: UI dump says the active account is already @handle.
+    //   Cheaper than the full drawer+sheet flow, and much more reliable.
+    if (isAlreadyOnAccount(handle)) {
+        logger.info(`[switchAccount] already on @${handle} (dump probe) — skipping`);
+        cachedCurrentUsername = handle;
+        return;
+    }
 
     // 1. Open the side drawer via the top-left avatar button.
     //    Try the FR label first, fall back to EN.
@@ -110,5 +167,6 @@ export async function switchAccount(driver: WDIOBrowser, username: string): Prom
 
     // 6. Sheet closes + app refreshes on Home under the new account.
     await sleep(randomRange(1500, 2500));
+    cachedCurrentUsername = handle;
     logger.info(`[switchAccount] now on @${handle}`);
 }
