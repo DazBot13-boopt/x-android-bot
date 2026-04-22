@@ -109,12 +109,15 @@ async function selectCommunityAudience(communityName: string): Promise<void> {
     logger.info(`[post] selecting community audience "${communityName}"`);
 
     // 1. Tap the audience pill. The pill contains the visible text
-    //    "Tout le monde" (FR) or "Everyone" (EN). We try FR first, then EN.
+    //    "Tout le monde" (FR) or "Everyone" (EN). We try FR first, then EN
+    //    against a SINGLE dump of the composer — a fresh dump per candidate
+    //    would double the 20-60s uiautomator-dump cost on EN devices.
+    const pillXml = dumpUiHierarchy();
     const pillCandidates = ['Tout le monde', 'Everyone'];
     let pillBounds: string | null = null;
     let pillLabel = '';
     for (const label of pillCandidates) {
-        const b = findBoundsByText(dumpUiHierarchy(), label);
+        const b = findBoundsByText(pillXml, label);
         if (b) {
             pillBounds = b;
             pillLabel = label;
