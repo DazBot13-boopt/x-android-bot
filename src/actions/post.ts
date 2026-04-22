@@ -7,30 +7,48 @@ import { sleep, randomRange } from '../utils/adb';
  * Composes and publishes a tweet from whichever account is currently active.
  * Caller is responsible for calling switchAccount() first.
  *
- * Real UI flow (confirmed from live dump 2026-04):
- *   Home → tap FAB resource-id `composer_write` →
- *   composer screen opens with an EditText `tweet_text` →
- *   type text → tap button `button_tweet` ("POSTER") →
- *   composer closes, back to Home.
+ * Real UI flow (X Android, FR app, confirmed from live dump 2026-04):
+ *   Home → tap FAB `composer_write` → radial menu expands showing
+ *   "Passer en direct / Spaces / Photos / Poster". The "Poster" entry is itself
+ *   another `composer_write` button (same resource-id). Tap it again → the
+ *   composer screen opens with an EditText `tweet_text`. Type → tap
+ *   `button_tweet` ("POSTER") → composer closes, back to Home.
+ *
+ * We detect the composer by probing for `tweet_text` after the first tap; if
+ * it's not there, we assume the radial menu is showing and tap `composer_write`
+ * a second time to drill into the composer. This is tolerant to future app
+ * versions where the FAB opens the composer directly.
  */
 export async function post(driver: WDIOBrowser, text: string): Promise<void> {
     logger.info(`[post] composing (${text.length} chars)`);
 
-    // 1. Tap the floating compose button.
+    // 1. Tap the floating compose button. On current FR app this opens the
+    //    radial menu (Passer en direct / Spaces / Photos / Poster).
     const fab = await driver.$(selectors.home.composeFab);
     await fab.waitForExist({ timeout: 10_000 });
     await fab.click();
-    await sleep(randomRange(1000, 2000));
+    await sleep(randomRange(700, 1200));
 
-    // 2. Focus the input and type.
-    const input = await driver.$(selectors.composer.textInput);
+    // 2. If the composer didn't open directly, we're on the radial menu — tap
+    //    composer_write a second time (same id as the "Poster" entry).
+    let input = await driver.$(selectors.composer.textInput);
+    if (!(await input.isExisting())) {
+        logger.info('[post] radial menu open — tapping "Poster" (composer_write #2)');
+        const fab2 = await driver.$(selectors.home.composeFab);
+        await fab2.waitForExist({ timeout: 5_000 });
+        await fab2.click();
+        await sleep(randomRange(700, 1200));
+        input = await driver.$(selectors.composer.textInput);
+    }
+
+    // 3. Focus the input and type.
     await input.waitForExist({ timeout: 10_000 });
     await input.click();
     await sleep(randomRange(300, 600));
     await input.setValue(text);
     await sleep(randomRange(800, 1600));
 
-    // 3. Tap the "POSTER" / "Post" button.
+    // 4. Tap the "POSTER" / "Post" button.
     const postBtn = await driver.$(selectors.composer.postButton);
     await postBtn.waitForExist({ timeout: 10_000 });
     await postBtn.click();
