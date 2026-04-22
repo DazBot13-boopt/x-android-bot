@@ -1,7 +1,7 @@
 import type { WDIOBrowser } from '../driver';
 import { selectors } from '../selectors';
 import { logger } from '../utils/logger';
-import { sleep, randomRange } from '../utils/adb';
+import { sleep, randomRange, coordTap, parseBoundsCenter } from '../utils/adb';
 
 /**
  * Composes and publishes a tweet from whichever account is currently active.
@@ -23,20 +23,37 @@ export async function post(driver: WDIOBrowser, text: string): Promise<void> {
     logger.info(`[post] composing (${text.length} chars)`);
 
     // 1. Tap the floating compose button. On current FR app this opens the
-    //    radial menu (Passer en direct / Spaces / Photos / Poster).
+    //    radial menu (Passer en direct / Spaces / Photos / Poster). Use a real
+    //    coord-tap via adb rather than webdriverio's .click(); the latter,
+    //    applied twice in a row on the same `composer_write` id, tends to be
+    //    treated by the app as "toggle radial" and we never reach the composer.
     const fab = await driver.$(selectors.home.composeFab);
     await fab.waitForExist({ timeout: 10_000 });
-    await fab.click();
+    const fabBounds = await fab.getAttribute('bounds');
+    const fabCenter = fabBounds ? parseBoundsCenter(fabBounds) : null;
+    if (fabCenter) {
+        coordTap(fabCenter.x, fabCenter.y);
+    } else {
+        logger.warn('[post] fab bounds unavailable; falling back to webdriverio click');
+        await fab.click();
+    }
     await sleep(randomRange(700, 1200));
 
     // 2. If the composer didn't open directly, we're on the radial menu — tap
-    //    composer_write a second time (same id as the "Poster" entry).
+    //    `composer_write` a second time via coord-tap (same resource-id as the
+    //    "Poster" entry; same bounds as the FAB itself).
     let input = await driver.$(selectors.composer.textInput);
     if (!(await input.isExisting())) {
-        logger.info('[post] radial menu open — tapping "Poster" (composer_write #2)');
+        logger.info('[post] radial menu open — coord-tapping "Poster" (composer_write #2)');
         const fab2 = await driver.$(selectors.home.composeFab);
         await fab2.waitForExist({ timeout: 5_000 });
-        await fab2.click();
+        const fab2Bounds = await fab2.getAttribute('bounds');
+        const fab2Center = fab2Bounds ? parseBoundsCenter(fab2Bounds) : null;
+        if (fab2Center) {
+            coordTap(fab2Center.x, fab2Center.y);
+        } else {
+            await fab2.click();
+        }
         await sleep(randomRange(700, 1200));
         input = await driver.$(selectors.composer.textInput);
     }
