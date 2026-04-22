@@ -1,0 +1,26 @@
+{
+  "name": "x-android-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mobile-worker: pilots a physical Android phone via Appium to run bot actions against the X (Twitter) app on behalf of the SAAS dashboard.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "start": "node dist/index.js",
+    "dump-ui": "ts-node src/utils/dump.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "bullmq": "^5.7.0",
+    "dotenv": "^16.4.5",
+    "ioredis": "^5.4.1",
+    "webdriverio": "^8.36.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.4.3"
+  }
+}

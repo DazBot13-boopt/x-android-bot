@@ -1,0 +1,9 @@
+version: "3.9"
+# Optional: only if you are running the full SAAS stack on the same machine.
+# The mobile worker itself doesn't need Postgres, just Redis.
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
