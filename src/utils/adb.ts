@@ -77,6 +77,25 @@ function hideSoftKeyboardIfOpen(): void {
 }
 
 /**
+ * Returns the device's physical screen size via `adb shell wm size`.
+ * Output looks like "Physical size: 720x1600" (optionally followed by an
+ * override size on a second line). We cache the result per-process since
+ * the physical size never changes.
+ */
+let _cachedScreenSize: { width: number; height: number } | null = null;
+export function getScreenSize(): { width: number; height: number } {
+    if (_cachedScreenSize) return _cachedScreenSize;
+    const out = adb(['shell', 'wm', 'size'], 10_000);
+    // Prefer "Override size" when present (reflects what apps actually see).
+    const over = out.match(/Override size:\s*(\d+)x(\d+)/);
+    const phys = out.match(/Physical size:\s*(\d+)x(\d+)/);
+    const m = over || phys;
+    if (!m) throw new Error(`wm size: unable to parse "${out.trim()}"`);
+    _cachedScreenSize = { width: Number(m[1]), height: Number(m[2]) };
+    return _cachedScreenSize;
+}
+
+/**
  * Sends a real touch event at (x, y) via `adb shell input tap`.
  * Use this for elements whose own node is clickable=false but whose parent
  * is clickable — webdriverio's .click() on the child sometimes doesn't bubble
