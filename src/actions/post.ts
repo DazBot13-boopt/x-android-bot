@@ -142,8 +142,13 @@ async function selectCommunityAudience(communityName: string): Promise<void> {
             logger.info(
                 `[post] community "${communityName}" not visible yet, scrolling sheet up (attempt ${attempt + 1}/3)`,
             );
-            // Scroll within the sheet (it starts ~halfway down the screen).
-            adb(['shell', 'input', 'swipe', '360', '1200', '360', '600', '400']);
+            // Scroll within the sheet (it occupies roughly the lower half of
+            // the screen). Coordinates are screen-relative so this works on
+            // any resolution — matches the 720x1600 baseline (50%, 75%→37.5%).
+            const swipeX = Math.round(width * 0.5);
+            const swipeY1 = Math.round(height * 0.75);
+            const swipeY2 = Math.round(height * 0.375);
+            adb(['shell', 'input', 'swipe', String(swipeX), String(swipeY1), String(swipeX), String(swipeY2), '400']);
             await sleep(randomRange(700, 1000));
         }
     }
