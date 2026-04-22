@@ -1,56 +1,86 @@
 /**
  * Selectors for the X (Twitter) Android app.
  *
- * These are STARTING POINTS — the X app updates its layout often and the exact
- * content-desc/resource-id may vary by version and language. We'll refine them
- * together by dumping the UI hierarchy with `npm run dump-ui` and inspecting it.
+ * Tuned from real UI dumps of the French app (com.twitter.android). If you're
+ * on the English app, most resource-ids are identical — only text / content-desc
+ * values differ (we keep FR + EN fallbacks where needed).
  *
- * Selector format is webdriverio-compatible:
- *   "~label"                         → AccessibilityId (android:contentDescription)
+ * Selector syntax (webdriverio):
+ *   "~label"                         → AccessibilityId (content-desc)
  *   "id=com.twitter.android:id/xyz"  → resource-id
- *   "android=new UiSelector().text(\"Post\")"  → UiAutomator2 DSL
- *   "//android.widget.Button[@text='Post']"    → XPath (slowest, last resort)
+ *   "android=new UiSelector()…"      → UiAutomator2 DSL (most flexible)
+ *
+ * If an action starts failing after an X app update, dump the screen again:
+ *   npm run dump-ui -- <screen-label>
+ * then adjust the constants below.
  */
 
+const PKG = 'com.twitter.android';
+
 export const selectors = {
-    // ── Home / navigation ──────────────────────────────────────────────────
+    // ── Home / bottom nav ─────────────────────────────────────────────────
     home: {
-        composeFab: '~Post', // bottom-right floating button (labelled "Post" in EN, "Poster" in FR)
-        composeFabFr: '~Poster',
-        profileDrawer: '~Show navigation drawer', // top-left hamburger / avatar
-        timelineFirstTweet: 'id=com.twitter.android:id/timeline', // container; we tap children
+        // Top-left avatar / hamburger. Opens the account-switcher bottom sheet.
+        // FR: "Montrer le menu de navigation"   EN: "Show navigation drawer"
+        navDrawerFr: '~Montrer le menu de navigation',
+        navDrawerEn: '~Show navigation drawer',
+
+        // Floating "compose new post" button (bottom-right).
+        // resource-id is stable across locales; FR content-desc is "Nouveau post".
+        composeFab: `id=${PKG}:id/composer_write`,
+
+        // Bottom-nav tab "Home" / "Accueil" — used to reset navigation after an action.
+        homeTabFr: 'android=new UiSelector().descriptionStartsWith("Accueil")',
+        homeTabEn: 'android=new UiSelector().descriptionStartsWith("Home")',
     },
 
-    // ── Account switcher (in nav drawer) ───────────────────────────────────
+    // ── Account-switcher bottom sheet ─────────────────────────────────────
+    // Opens when you tap the nav-drawer avatar on Home. Shows "Comptes" header +
+    // list of logged-in accounts (display name + @handle) + "Ajouter un compte".
     accountSwitcher: {
-        dropdownChevron: '~Account menu', // chevron next to current account name
-        addExistingAccount: '~Add an existing account',
-        // An account row is identified by the username text (@handle)
-        accountRowByUsername: (handle: string) =>
-            `android=new UiSelector().textContains("@${handle.replace(/^@/, '')}")`,
+        // Wait for the sheet's container to appear.
+        sheetContainer: `id=${PKG}:id/design_bottom_sheet`,
+        // Each account row has a TextView with the @handle text, e.g. "@alice_on_x".
+        accountRowByHandle: (handle: string) => {
+            const h = handle.startsWith('@') ? handle : `@${handle}`;
+            // Exact-text match on the @handle TextView — clicking it triggers the switch.
+            return `android=new UiSelector().text("${h}")`;
+        },
+        // Marker on the currently-active account row.
+        currentAccountMarker: '~Compte actuel',
+        currentAccountMarkerEn: '~Current account',
     },
 
-    // ── Composer ───────────────────────────────────────────────────────────
+    // ── Composer (new post or reply) ──────────────────────────────────────
     composer: {
-        textInput: 'id=com.twitter.android:id/tweet_text',
-        postButton: '~Post', // same content-desc as FAB on home — disambiguate by screen
-        postButtonFr: '~Poster',
-        closeButton: '~Close', // X button top-left of composer
+        // EditText for the tweet / reply body.
+        textInput: `id=${PKG}:id/tweet_text`,
+        // "POSTER" / "Post" button in the top-right of the composer.
+        postButton: `id=${PKG}:id/button_tweet`,
+        // Back / close button (discards draft).
+        backButtonFr: '~Retourner en arrière',
+        backButtonEn: '~Back',
+        // Avatar inside the composer showing the currently-selected author. Tapping
+        // it ALSO opens the account switcher bottom sheet — useful fallback if the
+        // home-screen drawer fails.
+        authorSwitcher: `id=${PKG}:id/userImage`,
     },
 
-    // ── Tweet detail (reply / like / URL navigation) ───────────────────────
-    tweetDetail: {
-        likeButton: '~Like',
-        likeButtonFr: '~J\u2019aime',
-        unlikeButton: '~Liked',
-        replyButton: '~Reply',
-        replyButtonFr: '~R\u00e9pondre',
+    // ── Inline tweet actions (timeline row + tweet-detail screen) ─────────
+    // These resource-ids are the same whether the tweet is shown inline in the
+    // timeline or on its own detail page after a deep-link navigation.
+    tweetActions: {
+        reply: `id=${PKG}:id/inline_reply`,
+        retweet: `id=${PKG}:id/inline_retweet`,
+        like: `id=${PKG}:id/inline_like`,
+        bookmark: `id=${PKG}:id/inline_bookmark`,
+        share: `id=${PKG}:id/inline_twitter_share`,
     },
 
-    // ── Common ─────────────────────────────────────────────────────────────
+    // ── Common ────────────────────────────────────────────────────────────
     common: {
-        backButton: '~Navigate up',
-        dismissDialog: 'id=android:id/button1',
+        dismissDialogOk: 'id=android:id/button1',
+        dismissDialogCancel: 'id=android:id/button2',
     },
 };
 
