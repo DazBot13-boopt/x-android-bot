@@ -58,13 +58,26 @@ export async function commentOnUrl(
 /**
  * Likes the currently-displayed tweet (timeline row or tweet-detail main tweet).
  * Same resource-id works in both contexts.
+ *
+ * IMPORTANT: the `inline_like` resource-id is the SAME element in liked and
+ * unliked states — the button does not disappear once liked, it just flips its
+ * `selected` attribute. So we must read that attribute before clicking,
+ * otherwise we'd toggle (= UNLIKE) already-liked tweets on retry.
  */
 export async function likeCurrentTweet(driver: WDIOBrowser): Promise<void> {
     const like = await driver.$(selectors.tweetActions.like);
-    if (await like.isExisting()) {
-        await like.click();
-        logger.info(`[like] done`);
-    } else {
-        logger.warn(`[like] like button not found (already liked, or screen changed)`);
+    if (!(await like.isExisting())) {
+        logger.warn(`[like] like button not found (screen changed?)`);
+        return;
     }
+
+    // UiAutomator2 exposes the boolean `selected` attribute as the string "true" / "false".
+    const selected = await like.getAttribute('selected').catch(() => 'false');
+    if (selected === 'true') {
+        logger.info(`[like] skipped — tweet already liked`);
+        return;
+    }
+
+    await like.click();
+    logger.info(`[like] done`);
 }
