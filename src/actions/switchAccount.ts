@@ -39,7 +39,7 @@ function isAlreadyOnAccount(handle: string): boolean {
         const needle = `@${handle.replace(/^@/, '')}`;
         return (
             xml.includes(`text="${needle}"`) ||
-            xml.includes(`content-desc="${needle}`)
+            xml.includes(`content-desc="${needle}"`)
         );
     } catch (err) {
         logger.warn(`[switchAccount] dump probe failed: ${(err as Error).message}`);
