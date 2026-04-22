@@ -9,6 +9,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "start": "node dist/index.js",
     "dump-ui": "ts-node src/utils/dump.ts",
+    "enqueue": "ts-node scripts/enqueue.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
