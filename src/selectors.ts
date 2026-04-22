@@ -34,9 +34,23 @@ export const selectors = {
         homeTabEn: 'android=new UiSelector().descriptionStartsWith("Home")',
     },
 
+    // ── Side drawer (opens after tapping the nav-drawer avatar on Home) ───
+    // Contains: top bar with quick-switch avatar shortcuts + "Permuter les comptes"
+    // button, then the current account info, then Profil / Premium / Communautés /
+    // Signets / Listes / Spaces / Creator Studio / Paramètres et support.
+    sideDrawer: {
+        // Root of the drawer — use to wait for it to finish animating in.
+        container: `id=${PKG}:id/drawer`,
+        // "Permuter les comptes" / "Switch accounts" button in the top-right of the
+        // drawer avatar row. Tapping it opens the "Comptes" bottom sheet over the drawer.
+        switchAccountsFr: '~Permuter les comptes',
+        switchAccountsEn: '~Switch accounts',
+    },
+
     // ── Account-switcher bottom sheet ─────────────────────────────────────
-    // Opens when you tap the nav-drawer avatar on Home. Shows "Comptes" header +
-    // list of logged-in accounts (display name + @handle) + "Ajouter un compte".
+    // Opens when you tap "Permuter les comptes" inside the side drawer. Shows
+    // "Comptes" header + list of logged-in accounts (display name + @handle) +
+    // "Ajouter un compte".
     accountSwitcher: {
         // Wait for the sheet's container to appear.
         sheetContainer: `id=${PKG}:id/design_bottom_sheet`,
