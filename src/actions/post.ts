@@ -7,6 +7,7 @@ import {
     dumpUiHierarchy,
     coordTap,
     parseBoundsCenter,
+    getScreenSize,
 } from '../utils/adb';
 import { config } from '../config';
 
@@ -108,32 +109,28 @@ function findCommunityRowBounds(xml: string, communityName: string): string | nu
 async function selectCommunityAudience(communityName: string): Promise<void> {
     logger.info(`[post] selecting community audience "${communityName}"`);
 
-    // 1. Tap the audience pill. The pill contains the visible text
-    //    "Tout le monde" (FR) or "Everyone" (EN). We try FR first, then EN
-    //    against a SINGLE dump of the composer — a fresh dump per candidate
-    //    would double the 20-60s uiautomator-dump cost on EN devices.
-    const pillXml = dumpUiHierarchy();
-    const pillCandidates = ['Tout le monde', 'Everyone'];
-    let pillBounds: string | null = null;
-    let pillLabel = '';
-    for (const label of pillCandidates) {
-        const b = findBoundsByText(pillXml, label);
-        if (b) {
-            pillBounds = b;
-            pillLabel = label;
-            break;
-        }
-    }
-    if (!pillBounds) {
-        throw new Error(
-            `[post] audience pill not found in composer (looked for ${pillCandidates.join(', ')})`,
-        );
-    }
-    const pillCenter = parseBoundsCenter(pillBounds);
-    if (!pillCenter) throw new Error(`[post] bad pill bounds: ${pillBounds}`);
-    logger.info(`[post] tapping audience pill "${pillLabel}" at (${pillCenter.x}, ${pillCenter.y})`);
-    coordTap(pillCenter.x, pillCenter.y);
-    await sleep(randomRange(1500, 2200));
+    // 1. Tap the audience pill.
+    //    We CANNOT dump the composer to find the pill: the composer has a
+    //    focused EditText + visible soft keyboard, and `uiautomator dump`
+    //    (even with --compressed) hangs forever waiting for window idle in
+    //    that state on this device. Verified by running the dump from a
+    //    separate terminal while the composer was open — it never returns.
+    //
+    //    Instead we tap at a screen-relative position derived from `wm size`.
+    //    On the X Android composer the "Tout le monde / Everyone" pill is
+    //    consistently at ~32% of the width, ~11% of the height, right of
+    //    the avatar. Verified on 720x1600 (Tecno KM5) where that gives the
+    //    center of the pill. Tapping the pill opens the audience sheet,
+    //    which dismisses the keyboard — and after that, dumping works
+    //    reliably again for the sheet's community rows.
+    const { width, height } = getScreenSize();
+    const pillX = Math.round(width * 0.32);
+    const pillY = Math.round(height * 0.11);
+    logger.info(
+        `[post] tapping audience pill at (${pillX}, ${pillY}) on ${width}x${height}`,
+    );
+    coordTap(pillX, pillY);
+    await sleep(randomRange(1800, 2500));
 
     // 2. Find and tap the community row in the bottom sheet.
     //    Retry with a scroll if the row isn't visible yet.
@@ -145,8 +142,13 @@ async function selectCommunityAudience(communityName: string): Promise<void> {
             logger.info(
                 `[post] community "${communityName}" not visible yet, scrolling sheet up (attempt ${attempt + 1}/3)`,
             );
-            // Scroll within the sheet (it starts ~halfway down the screen).
-            adb(['shell', 'input', 'swipe', '360', '1200', '360', '600', '400']);
+            // Scroll within the sheet (it occupies roughly the lower half of
+            // the screen). Coordinates are screen-relative so this works on
+            // any resolution — matches the 720x1600 baseline (50%, 75%→37.5%).
+            const swipeX = Math.round(width * 0.5);
+            const swipeY1 = Math.round(height * 0.75);
+            const swipeY2 = Math.round(height * 0.375);
+            adb(['shell', 'input', 'swipe', String(swipeX), String(swipeY1), String(swipeX), String(swipeY2), '400']);
             await sleep(randomRange(700, 1000));
         }
     }
