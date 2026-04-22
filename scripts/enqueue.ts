@@ -22,6 +22,7 @@ type Args = {
     url?: string;
     count?: number;
     comments?: string[];
+    community?: string;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -47,6 +48,10 @@ function parseArgs(argv: string[]): Args {
                 break;
             case '--url':
                 args.url = v;
+                i++;
+                break;
+            case '--community':
+                args.community = v;
                 i++;
                 break;
             case '--count':
@@ -92,6 +97,7 @@ async function main() {
             url: args.url,
             count: args.count,
             comments: args.comments,
+            community: args.community,
         },
     };
 

@@ -42,6 +42,7 @@ export function startWorker() {
                     url?: string;
                     count?: number;
                     comments?: string[];
+                    community?: string;
                 };
             };
             logger.info(`[job ${job.id}] action=${action} username=${jobConfig?.username || '?'}`);
@@ -62,7 +63,7 @@ export function startWorker() {
                 case 'autoPost': {
                     const text = jobConfig.text || '';
                     if (!text) throw new Error('post action requires config.text');
-                    await post(driver, text);
+                    await post(driver, text, { community: jobConfig.community });
                     break;
                 }
                 case 'autoComment':
