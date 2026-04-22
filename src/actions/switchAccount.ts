@@ -1,7 +1,46 @@
 import type { WDIOBrowser } from '../driver';
 import { selectors } from '../selectors';
 import { logger } from '../utils/logger';
-import { sleep, randomRange } from '../utils/adb';
+import { sleep, randomRange, ensureAppForeground } from '../utils/adb';
+import { config } from '../config';
+
+/**
+ * Best-effort: make sure the X app is on the Home (timeline) tab before any
+ * interaction. The account-switcher is only reachable from Home, so if the
+ * user left the app on Search / Notifications / a tweet-detail, we'd fail.
+ *
+ * Strategy:
+ *   1. Relaunch the X main activity via `adb am start`. Because the activity
+ *      has singleTask / singleTop flags, this brings an already-running app
+ *      to foreground on the Home tab without losing session.
+ *   2. If the Home tab isn't focused (user was deep inside), tap the
+ *      bottom-nav "Accueil"/"Home" element once as a fallback.
+ */
+async function ensureOnHomeTab(driver: WDIOBrowser): Promise<void> {
+    try {
+        ensureAppForeground(config.android.xAppPackage);
+    } catch (err) {
+        logger.warn(`[switchAccount] ensureAppForeground failed (continuing): ${(err as Error).message}`);
+    }
+    await sleep(randomRange(1200, 2000));
+
+    // If the nav-drawer is already visible, we're done.
+    const alreadyHome = await driver.$(selectors.home.navDrawerFr);
+    if (await alreadyHome.isExisting()) return;
+    const alreadyHomeEn = await driver.$(selectors.home.navDrawerEn);
+    if (await alreadyHomeEn.isExisting()) return;
+
+    // Otherwise, tap the bottom-nav Home tab.
+    for (const sel of [selectors.home.homeTabFr, selectors.home.homeTabEn]) {
+        const tab = await driver.$(sel);
+        if (await tab.isExisting()) {
+            await tab.click();
+            await sleep(randomRange(800, 1500));
+            return;
+        }
+    }
+    logger.warn('[switchAccount] could not locate Home tab — will try nav-drawer anyway.');
+}
 
 /**
  * Switches the X app to the account whose @handle matches `username`.
@@ -19,6 +58,9 @@ import { sleep, randomRange } from '../utils/adb';
 export async function switchAccount(driver: WDIOBrowser, username: string): Promise<void> {
     const handle = username.replace(/^@/, '');
     logger.info(`[switchAccount] → @${handle}`);
+
+    // 0. Ensure the X app is on the Home tab; otherwise the nav-drawer button doesn't exist.
+    await ensureOnHomeTab(driver);
 
     // 1. Open the account-switcher bottom sheet via the top-left avatar button.
     //    Try the FR label first, fall back to EN.
