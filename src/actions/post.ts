@@ -44,27 +44,26 @@ function shellSingleQuote(s: string): string {
 export async function post(driver: WDIOBrowser, text: string): Promise<void> {
     logger.info(`[post] composing (${text.length} chars)`);
 
-    // 1. Fire the SEND intent scoped to the X package. Pre-fills `tweet_text`.
-    //
-    //    `adb shell` joins all extra argv with spaces into a single command
-    //    string and hands it to `sh` on the device, which re-splits on spaces.
-    //    So `--es EXTRA_TEXT "hello world"` as separate JS argv elements would
-    //    be reinterpreted as two args on the device side and `world` would
-    //    leak into the `-p` slot. We therefore build the full command string
-    //    ourselves with proper POSIX quoting and pass it as a single argv.
+    // 1. Launch the composer directly by component name with SEND extras.
+    //    `com.twitter.composer.ComposerActivity` is exported=false, but
+    //    `adb shell am start` runs under the shell UID which has permission to
+    //    launch non-exported activities of a package (unlike a plain SEND
+    //    intent from outside, which has to be routed through BrowserActivity).
+    //    Supplying `-a SEND -t text/plain --es EXTRA_TEXT …` pre-fills the
+    //    composer's EditText, so we skip typing entirely.
     try {
         const cmd = [
             'am start',
+            `-n ${config.android.xAppPackage}/com.twitter.composer.ComposerActivity`,
             '-a android.intent.action.SEND',
             '-t text/plain',
             `--es android.intent.extra.TEXT ${shellSingleQuote(text)}`,
-            `-p ${config.android.xAppPackage}`,
         ].join(' ');
         adb(['shell', cmd]);
     } catch (err) {
-        logger.warn(`[post] SEND intent failed: ${(err as Error).message}`);
+        logger.warn(`[post] ComposerActivity start failed: ${(err as Error).message}`);
     }
-    await sleep(randomRange(1200, 2000));
+    await sleep(randomRange(1500, 2500));
 
     // 2. Wait for the composer's EditText to appear.
     let input = await driver.$(selectors.composer.textInput);
