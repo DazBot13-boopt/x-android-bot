@@ -47,13 +47,12 @@ async function ensureOnHomeTab(driver: WDIOBrowser): Promise<void> {
  * Assumes the user has already logged this account in via the multi-account feature
  * of the X Android app — this function NEVER logs in, it only switches.
  *
- * Real UI flow (X Android v10+, French app, confirmed from live dump 2026-04):
- *   Home → tap avatar top-left ("Montrer le menu de navigation") →
- *   bottom-sheet "Comptes" opens showing all logged accounts →
- *   tap the row whose TextView reads "@<handle>" → sheet closes and app switches.
- *
- * Note: unlike older versions of the app, there is NO separate drawer+chevron step —
- * the avatar tap opens the account switcher directly as a bottom sheet.
+ * Real UI flow (X Android, French app, confirmed from live dumps 2026-04):
+ *   1. Home → tap avatar top-left ("Montrer le menu de navigation")
+ *   2. → side drawer slides in (Profil / Premium / Communautés / …)
+ *   3. In the drawer's top-bar, tap "Permuter les comptes"
+ *   4. → bottom-sheet "Comptes" appears with every logged-in account
+ *   5. Tap the row whose TextView reads "@<handle>" → sheet closes, app refreshes on Home.
  */
 export async function switchAccount(driver: WDIOBrowser, username: string): Promise<void> {
     const handle = username.replace(/^@/, '');
@@ -62,7 +61,7 @@ export async function switchAccount(driver: WDIOBrowser, username: string): Prom
     // 0. Ensure the X app is on the Home tab; otherwise the nav-drawer button doesn't exist.
     await ensureOnHomeTab(driver);
 
-    // 1. Open the account-switcher bottom sheet via the top-left avatar button.
+    // 1. Open the side drawer via the top-left avatar button.
     //    Try the FR label first, fall back to EN.
     let navBtn = await driver.$(selectors.home.navDrawerFr);
     if (!(await navBtn.isExisting())) {
@@ -72,16 +71,29 @@ export async function switchAccount(driver: WDIOBrowser, username: string): Prom
     await navBtn.click();
     await sleep(randomRange(800, 1500));
 
-    // 2. Wait for the bottom sheet to render.
+    // 2. Wait for the side drawer to finish animating in.
+    const drawer = await driver.$(selectors.sideDrawer.container);
+    await drawer.waitForExist({ timeout: 10_000 });
+
+    // 3. Tap "Permuter les comptes" to open the Comptes bottom sheet.
+    let switchBtn = await driver.$(selectors.sideDrawer.switchAccountsFr);
+    if (!(await switchBtn.isExisting())) {
+        switchBtn = await driver.$(selectors.sideDrawer.switchAccountsEn);
+    }
+    await switchBtn.waitForExist({ timeout: 10_000 });
+    await switchBtn.click();
+    await sleep(randomRange(600, 1200));
+
+    // 4. Wait for the bottom sheet to render.
     const sheet = await driver.$(selectors.accountSwitcher.sheetContainer);
     await sheet.waitForExist({ timeout: 10_000 });
 
-    // 3. Tap the row matching the exact @handle text.
+    // 5. Tap the row matching the exact @handle text.
     const row = await driver.$(selectors.accountSwitcher.accountRowByHandle(handle));
     await row.waitForExist({ timeout: 10_000 });
     await row.click();
 
-    // 4. Sheet closes + app refreshes on Home under the new account.
+    // 6. Sheet closes + app refreshes on Home under the new account.
     await sleep(randomRange(1500, 2500));
     logger.info(`[switchAccount] now on @${handle}`);
 }
