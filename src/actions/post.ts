@@ -4,7 +4,6 @@ import {
     sleep,
     randomRange,
     adb,
-    dumpUiHierarchy,
     coordTap,
     parseBoundsCenter,
     getScreenSize,
@@ -106,7 +105,22 @@ function findCommunityRowBounds(xml: string, communityName: string): string | nu
  * sheet), we scroll the sheet up once and re-try. If still not found we throw
  * so the caller can surface a clear error.
  */
-async function selectCommunityAudience(communityName: string): Promise<void> {
+/**
+ * Dumps the current UI via the live Appium/UIA2 session rather than the
+ * `adb shell uiautomator dump` CLI. Critical because with an active Appium
+ * session on the device, the CLI dump is starved of the single shared
+ * UIAutomator instrumentation slot and hangs 5+ minutes on composer screens.
+ * `driver.getPageSource()` goes through the session we already own and
+ * returns instantly.
+ */
+async function dumpViaDriver(driver: WDIOBrowser): Promise<string> {
+    return await driver.getPageSource();
+}
+
+async function selectCommunityAudience(
+    driver: WDIOBrowser,
+    communityName: string,
+): Promise<void> {
     logger.info(`[post] selecting community audience "${communityName}"`);
 
     // 1. Tap the audience pill.
@@ -136,7 +150,7 @@ async function selectCommunityAudience(communityName: string): Promise<void> {
     //    Retry with a scroll if the row isn't visible yet.
     let rowBounds: string | null = null;
     for (let attempt = 0; attempt < 3 && !rowBounds; attempt++) {
-        const sheetXml = dumpUiHierarchy();
+        const sheetXml = await dumpViaDriver(driver);
         rowBounds = findCommunityRowBounds(sheetXml, communityName);
         if (!rowBounds && attempt < 2) {
             logger.info(
@@ -193,12 +207,6 @@ export async function post(
     text: string,
     options: PostOptions = {},
 ): Promise<void> {
-    // Signature still takes `driver` for symmetry with other actions and to
-    // keep the caller unchanged; this function intentionally does not use it
-    // (all UIA2 calls would crash during the MainActivity -> ComposerActivity
-    // transition).
-    void driver;
-
     const { community } = options;
     logger.info(
         `[post] composing (${text.length} chars)${community ? ` in community "${community}"` : ''}`,
@@ -225,14 +233,14 @@ export async function post(
 
     // 3. Optionally switch audience to a community.
     if (community) {
-        await selectCommunityAudience(community);
+        await selectCommunityAudience(driver, community);
     }
 
     // 4. Find & tap the POSTER button via one-shot dump + adb input tap.
     const BTN_RES_ID = `${config.android.xAppPackage}:id/button_tweet`;
     let bounds: string | null = null;
     for (let attempt = 0; attempt < 4 && !bounds; attempt++) {
-        const xml = dumpUiHierarchy();
+        const xml = await dumpViaDriver(driver);
         bounds = findBoundsByResourceId(xml, BTN_RES_ID);
         if (!bounds) {
             logger.info(
