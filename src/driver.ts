@@ -42,6 +42,26 @@ export function getDriver(): Promise<WDIOBrowser> {
                 'appium:dontStopAppOnReset': true,
                 'appium:newCommandTimeout': 300,
             },
+        }).then(async (d) => {
+            // Disable UIA2's "wait for UI idle" step before every findElement.
+            // On the X composer (focused EditText + soft keyboard), the window
+            // never reports idle, so findElement hangs indefinitely waiting
+            // for it. With waitForIdleTimeout=0 UIA2 queries the current
+            // AccessibilityNodeInfo tree immediately, which is what we want
+            // for automation of an animating UI.
+            //
+            // actionAcknowledgmentTimeout=0 avoids the same-style wait after
+            // clicks/swipes (we sleep explicitly in the flow).
+            try {
+                await d.updateSettings({
+                    waitForIdleTimeout: 0,
+                    actionAcknowledgmentTimeout: 0,
+                });
+                logger.info('UIA2 settings: waitForIdleTimeout=0 actionAcknowledgmentTimeout=0');
+            } catch (err) {
+                logger.warn('Failed to set UIA2 idle-wait settings:', (err as Error).message);
+            }
+            return d;
         });
     }
     return driverPromise;

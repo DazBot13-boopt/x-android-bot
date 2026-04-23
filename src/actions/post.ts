@@ -64,12 +64,34 @@ async function selectCommunityAudience(
     //    Android sometimes routes the tap to the IME instead of the pill.
     //    Appium's .click() goes through AccessibilityNodeInfo, which fires
     //    the pill's onClick directly regardless of focus/IME state.
-    const pillSelector =
-        'new UiSelector().className("android.widget.TextView").textContains("Tout le monde")';
-    const pill = await findByUiSelector(driver, pillSelector);
-    await pill.waitForExist({ timeout: 10_000 });
-    logger.info('[post] clicking audience pill via Appium');
-    await pill.click();
+    //
+    //    Try the clickable ancestor first so the click actually fires the
+    //    pill's onClick (the TextView itself usually doesn't own the
+    //    handler). Fall back to the TextView if no clickable wrapper
+    //    matches. Use exact `.text("Tout le monde")` first so we don't
+    //    match the "Tout le monde peut répondre" reply-scope footer.
+    const pillCandidates = [
+        'new UiSelector().clickable(true).childSelector(new UiSelector().text("Tout le monde"))',
+        'new UiSelector().clickable(true).childSelector(new UiSelector().textStartsWith("Tout le monde"))',
+        'new UiSelector().text("Tout le monde")',
+        'new UiSelector().className("android.widget.TextView").textStartsWith("Tout le monde")',
+    ];
+    logger.info('[post] locating audience pill via Appium');
+    let pillClicked = false;
+    for (const selector of pillCandidates) {
+        const el = await findByUiSelector(driver, selector);
+        if (await el.isExisting()) {
+            logger.info(`[post] clicking audience pill via Appium (${selector.slice(0, 60)}…)`);
+            await el.click();
+            pillClicked = true;
+            break;
+        }
+    }
+    if (!pillClicked) {
+        throw new Error(
+            '[post] audience pill not found in composer — is the composer actually open?',
+        );
+    }
     await sleep(randomRange(1500, 2200));
 
     // 2. Find and click the community row in the bottom sheet.
