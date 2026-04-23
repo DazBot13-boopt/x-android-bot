@@ -77,15 +77,25 @@ async function selectCommunityAudience(
         'new UiSelector().className("android.widget.TextView").textStartsWith("Tout le monde")',
     ];
     logger.info('[post] locating audience pill via Appium');
+    // Poll the candidates for up to 10 s total so a slow-rendering composer
+    // doesn't immediately throw. `isExisting()` is an instantaneous snapshot,
+    // so the retry loop is what gives us the equivalent of the old
+    // `waitForExist({ timeout: 10_000 })` behaviour while still trying
+    // multiple selectors per pass.
+    const PILL_TIMEOUT_MS = 10_000;
+    const deadline = Date.now() + PILL_TIMEOUT_MS;
     let pillClicked = false;
-    for (const selector of pillCandidates) {
-        const el = await findByUiSelector(driver, selector);
-        if (await el.isExisting()) {
-            logger.info(`[post] clicking audience pill via Appium (${selector.slice(0, 60)}…)`);
-            await el.click();
-            pillClicked = true;
-            break;
+    while (!pillClicked && Date.now() < deadline) {
+        for (const selector of pillCandidates) {
+            const el = await findByUiSelector(driver, selector);
+            if (await el.isExisting()) {
+                logger.info(`[post] clicking audience pill via Appium (${selector.slice(0, 60)}…)`);
+                await el.click();
+                pillClicked = true;
+                break;
+            }
         }
+        if (!pillClicked) await sleep(400);
     }
     if (!pillClicked) {
         throw new Error(
