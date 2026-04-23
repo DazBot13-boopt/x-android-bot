@@ -16,7 +16,19 @@ import { config } from '../config';
  * backslashes and double quotes handles both.
  */
 function shellDoubleQuote(s: string): string {
-    return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    // Inside double quotes, `\`, `"`, `$` and backtick are all special to
+    // the shell. Escape them all so tweet text like `$TSLA`, `$100`, or
+    // `` `whoami` `` is preserved verbatim and we don't accidentally enable
+    // command injection when the text comes from the job queue.
+    return (
+        '"' +
+        s
+            .replace(/\\/g, '\\\\')
+            .replace(/"/g, '\\"')
+            .replace(/\$/g, '\\$')
+            .replace(/`/g, '\\`') +
+        '"'
+    );
 }
 
 /**
