@@ -59,9 +59,16 @@ function parseArgs(argv: string[]): Args {
                 i++;
                 break;
             case '--comments': {
-                const rem = rest.slice(i + 1).filter((a) => !a.startsWith('--'));
+                // Collect every positional arg after --comments, but STOP at the next --flag
+                // so we don't accidentally swallow e.g. the value of a later --url.
+                const rem: string[] = [];
+                let j = i + 1;
+                while (j < rest.length && !rest[j].startsWith('--')) {
+                    rem.push(rest[j]);
+                    j++;
+                }
                 args.comments = rem;
-                i += rem.length;
+                i = j - 1;
                 break;
             }
             default:
