@@ -73,19 +73,28 @@ async function selectCommunityAudience(
     await sleep(randomRange(1500, 2200));
 
     // 2. Find and click the community row in the bottom sheet.
-    //    Retry with a scroll if the row isn't visible yet.
+    //    Community rows can expose the community name on the row's `text`
+    //    attribute OR only on `content-desc` (which typically reads
+    //    "<name> <N> membres"). We try both before scrolling so we don't
+    //    miss communities that only match by description.
     const { width, height } = getScreenSize();
-    const rowSelector = `new UiSelector().textContains(${jsStringLiteralToUiAutomator(communityName)})`;
+    const lit = jsStringLiteralToUiAutomator(communityName);
+    const textSelector = `new UiSelector().textContains(${lit})`;
+    const descSelector = `new UiSelector().descriptionContains(${lit})`;
     let clicked = false;
     for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
-        const row = await findByUiSelector(driver, rowSelector);
-        const exists = await row.isExisting();
-        if (exists) {
-            logger.info(`[post] clicking community row "${communityName}" via Appium`);
-            await row.click();
-            clicked = true;
-            break;
+        for (const selector of [textSelector, descSelector]) {
+            const row = await findByUiSelector(driver, selector);
+            if (await row.isExisting()) {
+                logger.info(
+                    `[post] clicking community row "${communityName}" via Appium`,
+                );
+                await row.click();
+                clicked = true;
+                break;
+            }
         }
+        if (clicked) break;
         if (attempt < 2) {
             logger.info(
                 `[post] community "${communityName}" not visible yet, scrolling sheet up (attempt ${attempt + 1}/3)`,
