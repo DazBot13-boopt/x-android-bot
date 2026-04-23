@@ -26,31 +26,41 @@ function reEscape(s: string): string {
 }
 
 /**
- * Finds the first `<node>` in a uiautomator XML dump whose `resource-id`
- * attribute equals `resId`, and returns its `bounds` attribute (e.g.
- * "[528,152][576,200]") or null.
+ * Element-tag pattern that matches BOTH XML dump formats we consume:
+ *   - CLI `uiautomator dump` output uses generic `<node ...>` tags.
+ *   - Appium UIA2 `driver.getPageSource()` output uses class-name tags like
+ *     `<android.widget.Button ...>` or `<android.view.ViewGroup ...>`.
+ * Element names in the latter are dotted identifiers, so `[\w.$]+` covers
+ * both cases (including `$` for inner classes).
+ */
+const TAG = '<[\\w.$]+';
+
+/**
+ * Finds the first element in either a CLI uiautomator XML dump or an Appium
+ * `getPageSource()` dump whose `resource-id` attribute equals `resId`, and
+ * returns its `bounds` attribute (e.g. "[528,152][576,200]") or null.
  */
 function findBoundsByResourceId(xml: string, resId: string): string | null {
     const re = new RegExp(
-        `<node[^>]*\\bresource-id="${reEscape(resId)}"[^>]*\\bbounds="(\\[[^"]+\\])"`,
+        `${TAG}[^>]*\\bresource-id="${reEscape(resId)}"[^>]*\\bbounds="(\\[[^"]+\\])"`,
     );
     const m = xml.match(re);
     return m ? m[1] : null;
 }
 
 /**
- * Finds the first `<node>` whose `text` attribute contains `needle` (exact
- * substring, case-sensitive) and returns its `bounds`, or null.
+ * Finds the first element whose `text` attribute contains `needle` (exact
+ * substring, case-sensitive) and returns its `bounds`, or null. Works on
+ * both CLI `<node>` dumps and Appium class-name-tagged dumps.
  */
 function findBoundsByText(xml: string, needle: string): string | null {
-    // Match nodes: ... text="...NEEDLE..." ... bounds="[x1,y1][x2,y2]" ...
-    // Attributes can appear in any order — match bounds either side.
+    // Attributes can appear in any order — match bounds either side of text.
     const escNeedle = reEscape(needle);
     const patterns = [
         // bounds appears AFTER text
-        new RegExp(`<node[^>]*\\btext="[^"]*${escNeedle}[^"]*"[^>]*\\bbounds="(\\[[^"]+\\])"`),
+        new RegExp(`${TAG}[^>]*\\btext="[^"]*${escNeedle}[^"]*"[^>]*\\bbounds="(\\[[^"]+\\])"`),
         // bounds appears BEFORE text (rare, but defensive)
-        new RegExp(`<node[^>]*\\bbounds="(\\[[^"]+\\])"[^>]*\\btext="[^"]*${escNeedle}[^"]*"`),
+        new RegExp(`${TAG}[^>]*\\bbounds="(\\[[^"]+\\])"[^>]*\\btext="[^"]*${escNeedle}[^"]*"`),
     ];
     for (const re of patterns) {
         const m = xml.match(re);
@@ -60,14 +70,15 @@ function findBoundsByText(xml: string, needle: string): string | null {
 }
 
 /**
- * Finds the first `<node>` whose `content-desc` attribute contains `needle`
- * (exact substring) and returns its `bounds`, or null.
+ * Finds the first element whose `content-desc` attribute contains `needle`
+ * (exact substring) and returns its `bounds`, or null. Works on both CLI
+ * `<node>` dumps and Appium class-name-tagged dumps.
  */
 function findBoundsByContentDesc(xml: string, needle: string): string | null {
     const escNeedle = reEscape(needle);
     const patterns = [
-        new RegExp(`<node[^>]*\\bcontent-desc="[^"]*${escNeedle}[^"]*"[^>]*\\bbounds="(\\[[^"]+\\])"`),
-        new RegExp(`<node[^>]*\\bbounds="(\\[[^"]+\\])"[^>]*\\bcontent-desc="[^"]*${escNeedle}[^"]*"`),
+        new RegExp(`${TAG}[^>]*\\bcontent-desc="[^"]*${escNeedle}[^"]*"[^>]*\\bbounds="(\\[[^"]+\\])"`),
+        new RegExp(`${TAG}[^>]*\\bbounds="(\\[[^"]+\\])"[^>]*\\bcontent-desc="[^"]*${escNeedle}[^"]*"`),
     ];
     for (const re of patterns) {
         const m = xml.match(re);
