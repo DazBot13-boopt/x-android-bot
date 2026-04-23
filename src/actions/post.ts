@@ -9,11 +9,14 @@ import {
 import { config } from '../config';
 
 /**
- * POSIX single-quote a string for safe interpolation into a `sh -c` command.
- * `a'b` -> `'a'\''b'`.
+ * Double-quote a string for safe interpolation into `am start`'s
+ * `optionalIntentArguments` payload. Appium feeds the whole string to
+ * `am start …` through its adb shell, so we need the value to survive a
+ * Unix shell split AND an `am` arg split; double-quoting + escaping
+ * backslashes and double quotes handles both.
  */
-function shellSingleQuote(s: string): string {
-    return "'" + s.replace(/'/g, `'\\''`) + "'";
+function shellDoubleQuote(s: string): string {
+    return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 /**
@@ -190,18 +193,26 @@ export async function post(
     );
 
     // 1. Launch the composer directly with pre-filled text.
+    //    We go through Appium's `mobile: startActivity` rather than raw
+    //    `adb shell am start` because UIA2 caches the "current activity"
+    //    internally; if we swap activity out-of-band, the next findElement
+    //    against the new activity crashes the instrumentation ("cannot be
+    //    proxied … instrumentation process is not running"). Routing the
+    //    start through Appium keeps UIA2 in sync.
     try {
-        const cmd = [
-            'am start',
-            `-n ${config.android.xAppPackage}/com.twitter.composer.ComposerActivity`,
-            '-a android.intent.action.SEND',
-            '-t text/plain',
-            `--es android.intent.extra.TEXT ${shellSingleQuote(text)}`,
-        ].join(' ');
-        adb(['shell', cmd]);
+        await driver.executeScript('mobile: startActivity', [{
+            component: `${config.android.xAppPackage}/com.twitter.composer.ComposerActivity`,
+            intentAction: 'android.intent.action.SEND',
+            intentType: 'text/plain',
+            // `mobile: startActivity` forwards optionalIntentArguments
+            // verbatim after the `am start …` flags it already passes, so
+            // this is the idiomatic way to add an --es extra. Double-quote
+            // the value so spaces survive the am start shell split.
+            optionalIntentArguments: `--es android.intent.extra.TEXT ${shellDoubleQuote(text)}`,
+        }]);
     } catch (err) {
         throw new Error(
-            `[post] failed to launch ComposerActivity: ${(err as Error).message}`,
+            `[post] failed to launch ComposerActivity via Appium: ${(err as Error).message}`,
         );
     }
 
