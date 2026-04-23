@@ -4,8 +4,6 @@ import {
     sleep,
     randomRange,
     adb,
-    coordTap,
-    parseBoundsCenter,
     getScreenSize,
 } from '../utils/adb';
 import { config } from '../config';
@@ -19,102 +17,39 @@ function shellSingleQuote(s: string): string {
 }
 
 /**
- * Escapes a user-supplied string for literal use inside a RegExp source.
- */
-function reEscape(s: string): string {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Finds the first `<node>` in a uiautomator XML dump whose `resource-id`
- * attribute equals `resId`, and returns its `bounds` attribute (e.g.
- * "[528,152][576,200]") or null.
- */
-function findBoundsByResourceId(xml: string, resId: string): string | null {
-    const re = new RegExp(
-        `<node[^>]*\\bresource-id="${reEscape(resId)}"[^>]*\\bbounds="(\\[[^"]+\\])"`,
-    );
-    const m = xml.match(re);
-    return m ? m[1] : null;
-}
-
-/**
- * Finds the first `<node>` whose `text` attribute contains `needle` (exact
- * substring, case-sensitive) and returns its `bounds`, or null.
- */
-function findBoundsByText(xml: string, needle: string): string | null {
-    // Match nodes: ... text="...NEEDLE..." ... bounds="[x1,y1][x2,y2]" ...
-    // Attributes can appear in any order — match bounds either side.
-    const escNeedle = reEscape(needle);
-    const patterns = [
-        // bounds appears AFTER text
-        new RegExp(`<node[^>]*\\btext="[^"]*${escNeedle}[^"]*"[^>]*\\bbounds="(\\[[^"]+\\])"`),
-        // bounds appears BEFORE text (rare, but defensive)
-        new RegExp(`<node[^>]*\\bbounds="(\\[[^"]+\\])"[^>]*\\btext="[^"]*${escNeedle}[^"]*"`),
-    ];
-    for (const re of patterns) {
-        const m = xml.match(re);
-        if (m) return m[1];
-    }
-    return null;
-}
-
-/**
- * Finds the first `<node>` whose `content-desc` attribute contains `needle`
- * (exact substring) and returns its `bounds`, or null.
- */
-function findBoundsByContentDesc(xml: string, needle: string): string | null {
-    const escNeedle = reEscape(needle);
-    const patterns = [
-        new RegExp(`<node[^>]*\\bcontent-desc="[^"]*${escNeedle}[^"]*"[^>]*\\bbounds="(\\[[^"]+\\])"`),
-        new RegExp(`<node[^>]*\\bbounds="(\\[[^"]+\\])"[^>]*\\bcontent-desc="[^"]*${escNeedle}[^"]*"`),
-    ];
-    for (const re of patterns) {
-        const m = xml.match(re);
-        if (m) return m[1];
-    }
-    return null;
-}
-
-/**
- * Tries to find a community row in the audience-selector bottom sheet by name.
- * The row can match either on `text` (the community's display name) or on
- * `content-desc` (which typically reads "<name> <N> membres"), so we try both
- * strategies.
- */
-function findCommunityRowBounds(xml: string, communityName: string): string | null {
-    return (
-        findBoundsByText(xml, communityName) ||
-        findBoundsByContentDesc(xml, communityName)
-    );
-}
-
-/**
  * Selects a community as the audience of the currently-open composer.
  *
  * Flow:
- *   1. Tap the "Tout le monde" / "Everyone" audience pill at the top of the
+ *   1. Click the "Tout le monde" / "Everyone" audience pill at the top of the
  *      composer to open the audience picker bottom sheet.
- *   2. Find the community row by its name (in text OR content-desc) and tap
- *      its center.
+ *   2. Find the community row by its name and click it (scrolling the sheet
+ *      up to 2× if the row is below the fold).
  *   3. The sheet auto-dismisses and the composer resumes with the community
  *      selected — the audience pill text flips from "Tout le monde" to the
- *      community name, which is how we confirm success.
+ *      community name.
  *
- * If the community name is not visible (e.g. hidden below the fold of the
- * sheet), we scroll the sheet up once and re-try. If still not found we throw
- * so the caller can surface a clear error.
+ * We interact via Appium's UiSelector / .click() rather than `adb input tap`
+ * + `uiautomator dump` because:
+ *   - `adb shell uiautomator dump` hangs 5+ minutes on the composer when an
+ *     Appium session holds the UIA2 instrumentation slot (verified with the
+ *     user: 339s + 294s for two manual dumps).
+ *   - `adb shell input tap` sometimes gets absorbed by the soft-keyboard IME
+ *     when the composer's EditText is focused, never reaching the pill.
+ * Appium's UiSelector resolves element bounds via AccessibilityNodeInfo
+ * (no window-idle needed) and .click() fires performAction(CLICK) directly
+ * on the node, bypassing the IME entirely.
  */
+
 /**
- * Dumps the current UI via the live Appium/UIA2 session rather than the
- * `adb shell uiautomator dump` CLI. Critical because with an active Appium
- * session on the device, the CLI dump is starved of the single shared
- * UIAutomator instrumentation slot and hangs 5+ minutes on composer screens.
- * `driver.getPageSource()` goes through the session we already own and
- * returns instantly.
+ * Wrap a WebDriverIO UiSelector query. Using `~`-accessibility id and
+ * `android=...` UiAutomator queries both go through the active UIA2
+ * session, which:
+ *   - clicks via AccessibilityNodeInfo.performAction(), bypassing focus
+ *     and keyboard-intercept issues that break plain `input tap`;
+ *   - does not require window-idle, unlike `adb shell uiautomator dump`.
  */
-async function dumpViaDriver(driver: WDIOBrowser): Promise<string> {
-    return await driver.getPageSource();
+async function findByUiSelector(driver: WDIOBrowser, uiSelector: string) {
+    return await driver.$(`android=${uiSelector}`);
 }
 
 async function selectCommunityAudience(
@@ -123,42 +58,38 @@ async function selectCommunityAudience(
 ): Promise<void> {
     logger.info(`[post] selecting community audience "${communityName}"`);
 
-    // 1. Tap the audience pill.
-    //    We CANNOT dump the composer to find the pill: the composer has a
-    //    focused EditText + visible soft keyboard, and `uiautomator dump`
-    //    (even with --compressed) hangs forever waiting for window idle in
-    //    that state on this device. Verified by running the dump from a
-    //    separate terminal while the composer was open — it never returns.
-    //
-    //    Instead we tap at a screen-relative position derived from `wm size`.
-    //    On the X Android composer the "Tout le monde / Everyone" pill is
-    //    consistently at ~32% of the width, ~11% of the height, right of
-    //    the avatar. Verified on 720x1600 (Tecno KM5) where that gives the
-    //    center of the pill. Tapping the pill opens the audience sheet,
-    //    which dismisses the keyboard — and after that, dumping works
-    //    reliably again for the sheet's community rows.
-    const { width, height } = getScreenSize();
-    const pillX = Math.round(width * 0.32);
-    const pillY = Math.round(height * 0.11);
-    logger.info(
-        `[post] tapping audience pill at (${pillX}, ${pillY}) on ${width}x${height}`,
-    );
-    coordTap(pillX, pillY);
-    await sleep(randomRange(1800, 2500));
+    // 1. Click the audience pill via Appium.
+    //    We tried `adb input tap` at screen-relative coords (PR #21), but
+    //    with the composer's EditText focused and the soft keyboard up,
+    //    Android sometimes routes the tap to the IME instead of the pill.
+    //    Appium's .click() goes through AccessibilityNodeInfo, which fires
+    //    the pill's onClick directly regardless of focus/IME state.
+    const pillSelector =
+        'new UiSelector().className("android.widget.TextView").textContains("Tout le monde")';
+    const pill = await findByUiSelector(driver, pillSelector);
+    await pill.waitForExist({ timeout: 10_000 });
+    logger.info('[post] clicking audience pill via Appium');
+    await pill.click();
+    await sleep(randomRange(1500, 2200));
 
-    // 2. Find and tap the community row in the bottom sheet.
+    // 2. Find and click the community row in the bottom sheet.
     //    Retry with a scroll if the row isn't visible yet.
-    let rowBounds: string | null = null;
-    for (let attempt = 0; attempt < 3 && !rowBounds; attempt++) {
-        const sheetXml = await dumpViaDriver(driver);
-        rowBounds = findCommunityRowBounds(sheetXml, communityName);
-        if (!rowBounds && attempt < 2) {
+    const { width, height } = getScreenSize();
+    const rowSelector = `new UiSelector().textContains(${jsStringLiteralToUiAutomator(communityName)})`;
+    let clicked = false;
+    for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
+        const row = await findByUiSelector(driver, rowSelector);
+        const exists = await row.isExisting();
+        if (exists) {
+            logger.info(`[post] clicking community row "${communityName}" via Appium`);
+            await row.click();
+            clicked = true;
+            break;
+        }
+        if (attempt < 2) {
             logger.info(
                 `[post] community "${communityName}" not visible yet, scrolling sheet up (attempt ${attempt + 1}/3)`,
             );
-            // Scroll within the sheet (it occupies roughly the lower half of
-            // the screen). Coordinates are screen-relative so this works on
-            // any resolution — matches the 720x1600 baseline (50%, 75%→37.5%).
             const swipeX = Math.round(width * 0.5);
             const swipeY1 = Math.round(height * 0.75);
             const swipeY2 = Math.round(height * 0.375);
@@ -166,18 +97,23 @@ async function selectCommunityAudience(
             await sleep(randomRange(700, 1000));
         }
     }
-    if (!rowBounds) {
+    if (!clicked) {
         throw new Error(
             `[post] community "${communityName}" not found in audience sheet — is the account a member?`,
         );
     }
-    const rowCenter = parseBoundsCenter(rowBounds);
-    if (!rowCenter) throw new Error(`[post] bad community row bounds: ${rowBounds}`);
-    logger.info(`[post] tapping community row at (${rowCenter.x}, ${rowCenter.y})`);
-    coordTap(rowCenter.x, rowCenter.y);
 
     // Sheet dismissal + composer re-render.
     await sleep(randomRange(1200, 1800));
+}
+
+/**
+ * Escapes a string for embedding as a UiAutomator `textContains("...")`
+ * argument. UiAutomator parses its own Java-ish string literal, so we must
+ * escape backslashes and double quotes.
+ */
+function jsStringLiteralToUiAutomator(s: string): string {
+    return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 export interface PostOptions {
@@ -236,31 +172,21 @@ export async function post(
         await selectCommunityAudience(driver, community);
     }
 
-    // 4. Find & tap the POSTER button via one-shot dump + adb input tap.
+    // 4. Click the POSTER button via Appium. Same rationale as the pill:
+    //    Appium's .click() bypasses focus/IME interception that breaks
+    //    plain `input tap`, and doesn't require window-idle for discovery.
     const BTN_RES_ID = `${config.android.xAppPackage}:id/button_tweet`;
-    let bounds: string | null = null;
-    for (let attempt = 0; attempt < 4 && !bounds; attempt++) {
-        const xml = await dumpViaDriver(driver);
-        bounds = findBoundsByResourceId(xml, BTN_RES_ID);
-        if (!bounds) {
-            logger.info(
-                `[post] POSTER button not visible yet (attempt ${attempt + 1}/4), waiting…`,
-            );
-            await sleep(randomRange(1200, 1800));
-        }
-    }
-    if (!bounds) {
+    const posterSelector = `new UiSelector().resourceId("${BTN_RES_ID}")`;
+    const poster = await findByUiSelector(driver, posterSelector);
+    try {
+        await poster.waitForExist({ timeout: 15_000 });
+    } catch {
         throw new Error(
             `[post] POSTER button (${BTN_RES_ID}) not found in composer — is the composer actually open?`,
         );
     }
-    const center = parseBoundsCenter(bounds);
-    if (!center) {
-        throw new Error(`[post] could not parse POSTER bounds: ${bounds}`);
-    }
-
-    logger.info(`[post] tapping POSTER at (${center.x}, ${center.y})`);
-    coordTap(center.x, center.y);
+    logger.info('[post] clicking POSTER via Appium');
+    await poster.click();
 
     // 5. Let the tweet upload and the composer close.
     await sleep(randomRange(3500, 5000));
